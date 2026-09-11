@@ -302,4 +302,85 @@ describe('release > switchReleaseProject', () => {
       (previousTagBlock?.element as StaticSelect).initial_option?.value,
     ).toEqual('1.2.3');
   });
+
+  it('should fall back to the first project whether the selected one is not a number', async () => {
+    const view = await openReleaseModal();
+    const projectBlock = findBlockByActionId(
+      view.blocks,
+      'release-select-project-action',
+    ) as InputBlock;
+
+    // When Slack sends a project id Homer cannot parse
+    const response = await postBlockActions({
+      actions: [{ action_id: 'release-select-project-action' }],
+      type: 'block_actions',
+      view: {
+        ...view,
+        id: 'viewId',
+        state: {
+          values: {
+            [projectBlock.block_id as string]: {
+              'release-select-project-action': {
+                selected_option: { value: 'not-a-number' },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(response.status).toEqual(HTTP_STATUS_OK);
+
+    // Then the modal is rebuilt on the first project instead of crashing
+    const updatedView = getUpdatedView(3) as ViewsUpdateArguments['view'];
+
+    expect(
+      (
+        findBlockByActionId(updatedView.blocks, 'release-select-project-action')
+          ?.element as StaticSelect
+      ).initial_option?.value,
+    ).toEqual(`${firstProject.id}`);
+    expect(
+      findBlockByActionId(updatedView.blocks, 'release-tag-action')?.block_id,
+    ).toEqual('release-tag-block-1148-stable-20200101-1000');
+  });
+
+  it('should log an unknown block action, reading the project from the view state', async () => {
+    const view = await openReleaseModal();
+    const projectBlock = findBlockByActionId(
+      view.blocks,
+      'release-select-project-action',
+    ) as InputBlock;
+    const projectOptions = (projectBlock.element as StaticSelect)
+      .options as StaticSelect['options'];
+
+    const response = await postBlockActions({
+      actions: [{ action_id: 'release-unknown-action' }],
+      type: 'block_actions',
+      view: {
+        ...view,
+        id: 'viewId',
+        state: {
+          values: {
+            [projectBlock.block_id as string]: {
+              'release-select-project-action': {
+                selected_option: projectOptions?.[1],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(response.status).toEqual(HTTP_STATUS_OK);
+
+    // The release config is looked up on the project selected in the state,
+    // whatever the block it has been read from.
+    expect(ConfigHelper.getProjectReleaseConfig).toHaveBeenCalledWith(
+      secondProject.id,
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      new Error('Unknown block action: release-unknown-action'),
+    );
+  });
 });
